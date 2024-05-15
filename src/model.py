@@ -10,20 +10,25 @@ from src.modules import LSTM_FCN, FCN
 
 class Model():
     
-    def __init__(self, features, units, dropout, filters, kernel_sizes, num_classes, model_type='baseline', seed=42):
+    def __init__(self, timesteps, features, hidden_size, num_layers, dropout, filters, kernel_sizes, units, num_classes, model_type='baseline', seed=42):
         '''
         Parameters:
         __________________________________
+        timesteps: int.
+            The length of each time series.
+            
         features: int.
-            The dimension of each (multivariate) time series.
-
-        units: list of int.
-            The length of the list corresponds to the number of recurrent blocks, the items in the
-            list are the number of units of the LSTM layer in each block.
-    
+            The dimension of each time series.
+        
+        hidden_size: int.
+            The number of units of each LSTM layer.
+        
+        num_layers: int.
+            The number of LSTM layers.
+        
         dropout: float.
-            Dropout rate to be applied after each recurrent block.
-    
+            The dropout rate applied after each LSTM layer.
+            
         filters: list of int.
             The length of the list corresponds to the number of convolutional blocks, the items in the
             list are the number of filters (or channels) of the convolutional layer in each block.
@@ -32,8 +37,11 @@ class Model():
             The length of the list corresponds to the number of convolutional blocks, the items in the
             list are the kernel sizes of the convolutional layer in each block.
     
+        units: int.
+            The number of units of the classification head.
+            
         num_classes: int.
-            Number of classes.
+            The number of classes.
         
         model_type: str.
             Model type, either 'baseline' or 'proposed' (default = 'baseline').
@@ -42,9 +50,8 @@ class Model():
             Random seed.
         '''
         
-        # save the inputs
+        # save the random seed
         self.seed = seed
-        self.model_type = model_type
         
         # check if GPU is available
         self.use_cuda = torch.cuda.is_available()
@@ -57,13 +64,31 @@ class Model():
             self.kwargs = {'num_workers': 1, 'pin_memory': True}
         
         # build and save the model
-        self.set_seed()
         if model_type == 'baseline':
-            self.model = FCN(features, filters, kernel_sizes, num_classes)
+            self.set_seed()
+            self.model = FCN(
+                features=features,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                units=units,
+                num_classes=num_classes
+            )
         elif model_type == 'proposed':
-            self.model = LSTM_FCN(features, units, dropout, filters, kernel_sizes, num_classes)
+            self.set_seed()
+            self.model = LSTM_FCN(
+                timesteps=timesteps,
+                features=features,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                dropout=dropout,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                units=units,
+                num_classes=num_classes
+            )
         self.model.to(self.device)
         if self.use_data_parallel:
+            self.set_seed()
             self.model = torch.nn.DataParallel(self.model).to(self.device)
         print(f'number of parameters: {format(sum(p.numel() for p in self.model.parameters()), ",.0f")}')
     
@@ -76,6 +101,7 @@ class Model():
         torch.manual_seed(self.seed)
         if self.use_cuda:
             torch.cuda.manual_seed(self.seed)
+            torch.backends.cudnn.benchmark = False
 
     def fit(self, x_train, y_train, x_test, y_test, learning_rate, batch_size, epochs, verbose=True):
         '''
@@ -130,7 +156,15 @@ class Model():
         )
         
         # instantiate the optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.AdamW(params=self.model.parameters())
+        
+        # instantiate the scheduler
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=learning_rate,
+            steps_per_epoch=len(train_loader),
+            epochs=epochs,
+        )
         
         # define the loss function
         loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -140,6 +174,7 @@ class Model():
             print(f'training on CUDA {", ".join([str(d) for d in self.model.device_ids])}')
         else:
             print(f'training on {str(self.device).upper()}')
+        self.set_seed()
         self.history = []
         for epoch in range(epochs):
             
@@ -154,6 +189,7 @@ class Model():
                 train_loss += loss
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
             train_end = time.time()
             train_loss /= len(train_loader.dataset)
             

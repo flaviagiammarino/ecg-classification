@@ -3,39 +3,40 @@ import warnings
 from collections import OrderedDict
 warnings.filterwarnings('ignore', category=UserWarning, module='torch.nn')
 
+
 class RecurrentBranch(torch.nn.Module):
     '''
     Recurrent branch.
     
     Parameters:
     __________________________________
+    timesteps: int.
+        The length of each time series.
+        
     features: int.
-      The dimension of each (multivariate) time series.
+        The dimension of each time series.
     
-    units: list of int.
-      The length of the list corresponds to the number of recurrent blocks, the
-      items in the list are the number of units of the LSTM layer in each block.
+    hidden_size: int.
+        The number of units of each LSTM layer.
+    
+    num_layers: int.
+        The number of LSTM layers.
     
     dropout: float.
-      Dropout rate to be applied after each recurrent block.
+        The dropout rate applied after each LSTM layer.
     '''
-    def __init__(self, features, units, dropout):
+    def __init__(self, timesteps, hidden_size, num_layers, dropout):
         super(RecurrentBranch, self).__init__()
-        
-        # check the inputs
-        if type(units) != list:
-            raise ValueError(f'The number of units should be provided as a list.')
         
         # build the model
         modules = OrderedDict()
-        for i in range(len(units)):
+        for i in range(num_layers):
             modules[f'LSTM_{i}'] = torch.nn.LSTM(
-                input_size=features if i == 0 else units[i - 1],
-                hidden_size=units[i],
+                input_size=timesteps if i == 0 else hidden_size,
+                hidden_size=hidden_size,
                 batch_first=True
             )
             modules[f'Lambda_{i}'] = Lambda(f=lambda x: x[0])
-            modules[f'ReLU_{i}'] = torch.nn.ReLU()
             modules[f'Dropout_{i}'] = torch.nn.Dropout(p=dropout)
         self.model = torch.nn.Sequential(modules)
     
@@ -46,7 +47,7 @@ class RecurrentBranch(torch.nn.Module):
         x: torch.Tensor.
             Time series, tensor with shape (batch size, features, timesteps).
         '''
-        return self.model(torch.transpose(x, 2, 1))[:, -1, :]
+        return self.model(x)[:, -1, :]
 
 
 class ConvolutionalBranch(torch.nn.Module):
@@ -56,7 +57,7 @@ class ConvolutionalBranch(torch.nn.Module):
     Parameters:
     __________________________________
     features: int.
-        The dimension of each (multivariate) time series.
+        The dimension of each time series.
 
     filters: list of int.
         The length of the list corresponds to the number of convolutional blocks, the items in the
@@ -110,7 +111,7 @@ class FCN(torch.nn.Module):
     Parameters:
     __________________________________
     features: int.
-        The dimension of each (multivariate) time series.
+        The dimension of each time series.
 
     filters: list of int.
         The length of the list corresponds to the number of convolutional blocks, the items in the
@@ -120,27 +121,34 @@ class FCN(torch.nn.Module):
         The length of the list corresponds to the number of convolutional blocks, the items in the
         list are the kernel size of the convolutional layer in each block.
 
+    units: int.
+        The number of units of the classification head.
+    
     num_classes: int.
-        Number of classes.
+        The number of classes.
     '''
-    def __init__(self, features, filters, kernel_sizes, num_classes):
+    def __init__(self, features, filters, kernel_sizes, units, num_classes):
         super(FCN, self).__init__()
         
         # convolutional branch
-        self.fcn = ConvolutionalBranch(features=features, filters=filters, kernel_sizes=kernel_sizes)
+        self.fcn = ConvolutionalBranch(
+            features=features,
+            filters=filters,
+            kernel_sizes=kernel_sizes
+        )
         
         # classification head of Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(output_size=1)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(output_size=1)
         
         self.batch_norm1 = torch.nn.BatchNorm1d(num_features=2 * filters[-1])
-        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=128)
+        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=units)
         
         self.dropout1 = torch.nn.Dropout(p=0.25)
         self.dropout2 = torch.nn.Dropout(p=0.50)
         
-        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1], out_features=128)
-        self.linear2 = torch.nn.Linear(in_features=128, out_features=num_classes)
+        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1], out_features=units)
+        self.linear2 = torch.nn.Linear(in_features=units, out_features=num_classes)
     
     def forward(self, x):
         '''
@@ -168,16 +176,21 @@ class LSTM_FCN(torch.nn.Module):
     
     Parameters:
     __________________________________
+    timesteps: int.
+        The length of each time series.
+        
     features: int.
-        The dimension of each (multivariate) time series.
-
-    units: list of int.
-        The length of the list corresponds to the number of recurrent blocks, the items in the
-        list are the number of units of the LSTM layer in each block.
-
+        The dimension of each time series.
+    
+    hidden_size: int.
+        The number of units of each LSTM layer.
+    
+    num_layers: int.
+        The number of LSTM layers.
+    
     dropout: float.
-        Dropout rate to be applied after each recurrent block.
-
+        The dropout rate applied after each LSTM layer.
+        
     filters: list of int.
         The length of the list corresponds to the number of convolutional blocks, the items in the
         list are the number of filters (or channels) of the convolutional layer in each block.
@@ -186,34 +199,42 @@ class LSTM_FCN(torch.nn.Module):
         The length of the list corresponds to the number of convolutional blocks, the items in the
         list are the kernel sizes of the convolutional layer in each block.
 
+    units: int.
+        The number of units of the classification head.
+        
     num_classes: int.
-        Number of classes.
+        The number of classes.
     '''
-    def __init__(self, features, units, dropout, filters, kernel_sizes, num_classes):
+    def __init__(self, timesteps, features, hidden_size, num_layers, dropout, filters, kernel_sizes, units, num_classes):
         super(LSTM_FCN, self).__init__()
         
         # convolutional branch
-        self.fcn = ConvolutionalBranch(features=features, filters=filters, kernel_sizes=kernel_sizes)
+        self.fcn = ConvolutionalBranch(
+            features=features,
+            filters=filters,
+            kernel_sizes=kernel_sizes
+        )
         
         # recurrent branch
-        self.lstm = RecurrentBranch(features=features, units=units, dropout=dropout)
-        
-        # convolutional branch
-        self.fcn = ConvolutionalBranch(features=features, filters=filters, kernel_sizes=kernel_sizes)
+        self.lstm = RecurrentBranch(
+            timesteps=timesteps,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+        )
         
         # classification head of Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(output_size=1)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(output_size=1)
         
-        self.batch_norm1 = torch.nn.BatchNorm1d(num_features=2 * filters[-1] + units[-1])
-        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=128)
+        self.batch_norm1 = torch.nn.BatchNorm1d(num_features=2 * filters[-1])
+        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=units + hidden_size)
         
         self.dropout1 = torch.nn.Dropout(p=0.25)
         self.dropout2 = torch.nn.Dropout(p=0.50)
         
-        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1] + units[-1], out_features=128)
-        self.linear2 = torch.nn.Linear(in_features=128, out_features=num_classes)
-
+        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1], out_features=units)
+        self.linear2 = torch.nn.Linear(in_features=units + hidden_size, out_features=num_classes)
 
     def forward(self, x):
         '''
@@ -229,8 +250,8 @@ class LSTM_FCN(torch.nn.Module):
         '''
         h = self.fcn(x)
         h = torch.squeeze(torch.concat([self.avg_pool(h), self.max_pool(h)], dim=1))
-        h = torch.concat([h, self.lstm(x)], dim=-1)
         h = self.linear1(self.dropout1(self.batch_norm1(h)))
+        h = torch.concat([h, self.lstm(x)], dim=-1)
         h = torch.nn.functional.relu(h)
         h = self.linear2(self.dropout2(self.batch_norm2(h)))
         return h
