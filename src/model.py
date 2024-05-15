@@ -47,7 +47,7 @@ class Model():
             Model type, either 'baseline' or 'proposed' (default = 'baseline').
         
         seed: int.
-            Random seed.
+            Random seed (default = 42).
         '''
         
         # save the random seed
@@ -120,7 +120,7 @@ class Model():
             Test labels.
             
         learning_rate: float.
-            Learning rate.
+            Maximum learning rate.
 
         batch_size: int.
             Batch size.

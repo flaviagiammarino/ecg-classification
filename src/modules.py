@@ -46,6 +46,7 @@ class RecurrentBranch(torch.nn.Module):
         __________________________________
         x: torch.Tensor.
             Time series, tensor with shape (batch size, features, timesteps).
+            Note the dimension shuffling.
         '''
         return self.model(x)[:, -1, :]
 
