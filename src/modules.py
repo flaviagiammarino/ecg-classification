@@ -129,12 +129,18 @@ class FCN(torch.nn.Module):
         # convolutional branch
         self.fcn = ConvolutionalBranch(features=features, filters=filters, kernel_sizes=kernel_sizes)
         
-        # Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989) classification head
+        # classification head of Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(output_size=1)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(output_size=1)
-        self.batch_norm = torch.nn.BatchNorm1d(num_features=2 * filters[-1])
-        self.dropout = torch.nn.Dropout(p=0.5)
-        self.linear = torch.nn.Linear(in_features=2 * filters[-1], out_features=num_classes)
+        
+        self.batch_norm1 = torch.nn.BatchNorm1d(num_features=2 * filters[-1])
+        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=128)
+        
+        self.dropout1 = torch.nn.Dropout(p=0.25)
+        self.dropout2 = torch.nn.Dropout(p=0.50)
+        
+        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1], out_features=128)
+        self.linear2 = torch.nn.Linear(in_features=128, out_features=num_classes)
     
     def forward(self, x):
         '''
@@ -150,7 +156,9 @@ class FCN(torch.nn.Module):
         '''
         h = self.fcn(x)
         h = torch.squeeze(torch.concat([self.avg_pool(h), self.max_pool(h)], dim=1))
-        h = self.linear(self.dropout(self.batch_norm(h)))
+        h = self.linear1(self.dropout1(self.batch_norm1(h)))
+        h = torch.nn.functional.relu(h)
+        h = self.linear2(self.dropout2(self.batch_norm2(h)))
         return h
 
 
@@ -190,12 +198,22 @@ class LSTM_FCN(torch.nn.Module):
         # recurrent branch
         self.lstm = RecurrentBranch(features=features, units=units, dropout=dropout)
         
-        # Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989) classification head
+        # convolutional branch
+        self.fcn = ConvolutionalBranch(features=features, filters=filters, kernel_sizes=kernel_sizes)
+        
+        # classification head of Strodthoff et al. 2021 (10.1109/JBHI.2020.3022989)
         self.avg_pool = torch.nn.AdaptiveAvgPool1d(output_size=1)
         self.max_pool = torch.nn.AdaptiveMaxPool1d(output_size=1)
-        self.batch_norm = torch.nn.BatchNorm1d(num_features=2 * filters[-1] + units[-1])
-        self.dropout = torch.nn.Dropout(p=0.5)
-        self.linear = torch.nn.Linear(in_features=2 * filters[-1] + units[-1], out_features=num_classes)
+        
+        self.batch_norm1 = torch.nn.BatchNorm1d(num_features=2 * filters[-1] + units[-1])
+        self.batch_norm2 = torch.nn.BatchNorm1d(num_features=128)
+        
+        self.dropout1 = torch.nn.Dropout(p=0.25)
+        self.dropout2 = torch.nn.Dropout(p=0.50)
+        
+        self.linear1 = torch.nn.Linear(in_features=2 * filters[-1] + units[-1], out_features=128)
+        self.linear2 = torch.nn.Linear(in_features=128, out_features=num_classes)
+
 
     def forward(self, x):
         '''
@@ -212,11 +230,16 @@ class LSTM_FCN(torch.nn.Module):
         h = self.fcn(x)
         h = torch.squeeze(torch.concat([self.avg_pool(h), self.max_pool(h)], dim=1))
         h = torch.concat([h, self.lstm(x)], dim=-1)
-        h = self.linear(self.dropout(self.batch_norm(h)))
+        h = self.linear1(self.dropout1(self.batch_norm1(h)))
+        h = torch.nn.functional.relu(h)
+        h = self.linear2(self.dropout2(self.batch_norm2(h)))
         return h
 
 
 class Lambda(torch.nn.Module):
+    '''
+    Lambda layer.
+    '''
     def __init__(self, f):
         super(Lambda, self).__init__()
         self.f = f
