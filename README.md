@@ -1,6 +1,6 @@
 # ECG classification on the PTB-XL dataset
 
-PyTorch implementation of the FCN model [1] (<i>fcn_wang</i>) for ECG classification 
+PyTorch implementation of FCN model [1] (<i>fcn_wang</i>) for ECG classification 
 proposed in [2] and corresponding LSTM-FCN [3] extension. Both models are trained and
 evaluated on the PTB-XL dataset [4].
 

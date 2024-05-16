@@ -12,9 +12,6 @@ class RecurrentBranch(torch.nn.Module):
     __________________________________
     timesteps: int.
         The length of each time series.
-        
-    features: int.
-        The dimension of each time series.
     
     hidden_size: int.
         The number of units of each LSTM layer.
